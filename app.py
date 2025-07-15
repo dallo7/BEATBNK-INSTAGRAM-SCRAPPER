@@ -74,7 +74,7 @@ def _format_as_event(profile_data: dict, event_post: dict) -> dict:
         'isPaid': False,
         'ticketingURL': profile_data.get('external_url', ''),
         'eventQRCode': None,
-        'eventStatus': 'UNPUBLISHED',
+        'eventStatus': 'SCHEDULED',
         'previousEventDate': None,
         'previousStartTime': None,
         'previousEndTime': None,
