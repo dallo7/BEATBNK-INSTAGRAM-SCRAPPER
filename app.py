@@ -1,3 +1,4 @@
+
 import os
 import json
 import random
@@ -22,12 +23,6 @@ db_connection_params = {
     "host": "beatbnk-db.cdgq4essi2q1.ap-southeast-2.rds.amazonaws.com",
     "port": "5432"
 }
-
-EVENT_KEYWORDS = [
-    'event', 'concert', 'show', 'performance', 'party', 'celebration',
-    'festival', 'workshop', 'seminar', 'conference', 'meetup', 'launch',
-    'opening', 'closing', 'anniversary', 'birthday', 'wedding', 'gala'
-]
 
 
 # ==============================================================================
@@ -89,49 +84,11 @@ def _format_as_event(profile_data: dict, event_post: dict) -> dict:
     }
 
 
-def _format_as_venue(profile_data: dict) -> dict:
-    """Formats scraped data into a venue dictionary."""
-    # CONSOLE LOG: Announce data formatting
-    profile_name = profile_data.get('full_name', 'Unknown Profile')
-    print(f"📝 Formatting '{profile_name}' as a VENUE.")
-
-    address = ''
-    address_str = profile_data.get('business_address_json')
-    if isinstance(address_str, str) and address_str:
-        try:
-            address_json = json.loads(address_str)
-            address = address_json.get('street_address', '')
-        except json.JSONDecodeError:
-            address = ''
-    now = datetime.now()
-
-    return {
-        'id': random.randint(100, 9999),
-        'userId': 289,
-        'venueName': profile_data.get('full_name', 'Unnamed Venue'),
-        'email': profile_data.get('business_email'),
-        'phoneNumber': profile_data.get('business_phone_number'),
-        'address': address,
-        'openHours': None,
-        'closingHours': None,
-        'latitude': None,
-        'longitude': None,
-        'capacity': None,
-        'description': profile_data.get('biography', ''),
-        'website': profile_data.get('external_url', ''),
-        'profileImageUrl': profile_data.get('profile_pic_url', ''),
-        'coverImageUrl': None,
-        'allowsDirectBookings': False,
-        'createdAt': now,
-        'updatedAt': now,
-        'deletedAt': None
-    }
-
-
 def upsert_to_db(record_type: str, data: dict):
     """Upserts a record and returns a status tuple (success, message)."""
+    # This will always receive 'event' as the record_type now
     table_name = "events" if record_type == "event" else "venues"
-    record_name = data.get('eventName', data.get('venueName'))
+    record_name = data.get('eventName')
 
     # CONSOLE LOG: Announce DB upsert attempt
     print(f"💾 Attempting to upsert '{record_name}' to table '{table_name}'...")
@@ -174,8 +131,9 @@ def upsert_to_db(record_type: str, data: dict):
 
 
 def InstaScrapper(scraped_data: list) -> tuple:
-    """Determines profile type and returns formatted data."""
-    print("🕵️  Analyzing scraped data to determine profile type...")
+    """Formats scraped profile data as an event."""
+    # CONSOLE LOG: Announce data analysis
+    print("🕵️  Processing scraped data as an EVENT.")
     try:
         profile_data = scraped_data[0]['data']
         posts = profile_data.get('edge_owner_to_timeline_media', {}).get('edges', [])
@@ -185,26 +143,15 @@ def InstaScrapper(scraped_data: list) -> tuple:
         print(f"Received Data: {scraped_data}")
         return "error", {"error": "Invalid data structure from API."}
 
-    recent_posts = posts[:5]
-    is_event, best_event_post = False, None
-    for post in recent_posts:
-        node = post.get('node', {})
-        if node.get('has_upcoming_event'):
-            is_event, best_event_post = True, node
-            break
-    if not is_event and recent_posts:
-        captions = [p['node']['edge_media_to_caption']['edges'][0]['node']['text'] for p in recent_posts if
-                    p.get('node', {}).get('edge_media_to_caption', {}).get('edges')]
-        text_to_search = (profile_data.get('biography', '') + ' ' + ' '.join(captions)).lower()
-        if any(keyword in text_to_search for keyword in EVENT_KEYWORDS):
-            is_event, best_event_post = True, recent_posts[0].get('node', {})
+    # Use the first post for event details if available, otherwise use profile data.
+    first_post = posts[0].get('node') if posts else None
 
-    if is_event:
-        print("✅ Analysis Complete: Profile identified as EVENT.")
-        return "event", _format_as_event(profile_data, best_event_post)
-    else:
-        print("✅ Analysis Complete: Profile identified as VENUE.")
-        return "venue", _format_as_venue(profile_data)
+    # Always format as an event
+    formatted_event = _format_as_event(profile_data, first_post)
+
+    # CONSOLE LOG: Announce completion
+    print("✅ Processing Complete: Profile formatted as EVENT.")
+    return "event", formatted_event
 
 
 def create_summary_card(record_type, data, db_success):
@@ -224,19 +171,6 @@ def create_summary_card(record_type, data, db_success):
         ]
         if data.get('ticketingURL'):
             card_body.append(dbc.CardLink("Get Tickets", href=data.get('ticketingURL'), target="_blank"))
-
-    elif record_type == 'venue':
-        title = data.get('venueName', 'N/A')
-        image_url = data.get('profileImageUrl')
-        description = data.get('description', 'No description available.')
-        short_desc = (description[:120] + '...') if len(description) > 120 else description
-        icon = "🏠"
-
-        card_body = [html.P(short_desc, className="card-text text-muted small")]
-        if data.get('address'):
-            card_body.append(html.P(f"📍 {data.get('address')}", className="card-text small"))
-        if data.get('phoneNumber'):
-            card_body.append(html.P(f"📞 {data.get('phoneNumber')}", className="card-text small"))
     else:
         return None
 
@@ -276,7 +210,7 @@ def run_scraping_job(usernames: list):
             record_type, filtered_data = InstaScrapper([response.json()])
 
             if record_type != "error":
-                yield 'log', html.P(f"✅ Profile '{username}' identified as an {record_type.upper()}.",
+                yield 'log', html.P(f"✅ Profile '{username}' processed as an {record_type.upper()}.",
                                     className="log-entry")
                 success, message = upsert_to_db(record_type, filtered_data)
 
@@ -317,7 +251,7 @@ app.layout = dbc.Container([
     dcc.Store(id='session-store'),
     html.Div([
         html.H1("🚀 BB Instagram Scrapper", className="display-3 title-glow"),
-        html.P("Enter Instagram profiles to scrape and save them as events or venues.", className="lead")
+        html.P("Enter Instagram profiles to scrape and save them as events.", className="lead")
     ], className="text-center my-4"),
 
     dbc.Row(justify="center", children=[
